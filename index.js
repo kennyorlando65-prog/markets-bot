@@ -12,7 +12,7 @@ let isReady = false;
 function initWhatsApp() {
   const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER;
   if (!phoneNumber) {
-    throw new Error('WHATSAPP_PHONE_NUMBER is required. Format: 2348012345678');
+    throw new Error('WHATSAPP_PHONE_NUMBER is required.');
   }
 
   waClient = new Client({
@@ -27,29 +27,23 @@ function initWhatsApp() {
         '--disable-gpu',
         '--no-first-run',
         '--disable-extensions',
-        '--disable-background-networking',
-        '--disable-default-apps',
-        '--disable-sync',
-        '--disable-translate',
-        '--hide-scrollbars',
-        '--metrics-recording-only',
-        '--mute-audio',
-        '--safebrowsing-disable-auto-update',
       ],
     },
   });
 
   waClient.on('qr', async () => {
+    // Wait 5 seconds for WhatsApp Web to fully load before requesting code
+    console.log('⏳ QR triggered — waiting 5s before requesting pairing code...');
+    await new Promise((r) => setTimeout(r, 5000));
     try {
       const code = await waClient.requestPairingCode(phoneNumber);
       console.log('\n──────────────────────────────────────');
       console.log('📲 WHATSAPP PAIRING CODE:');
       console.log(`\n   👉  ${code}  👈\n`);
-      console.log('1. Open WhatsApp on your phone');
-      console.log('2. Tap 3-dot menu → Linked Devices');
-      console.log('3. Tap Link a Device');
-      console.log('4. Tap "Link with phone number instead"');
-      console.log('5. Enter the code above');
+      console.log('1. Open WhatsApp → 3-dot menu');
+      console.log('2. Linked Devices → Link a Device');
+      console.log('3. Link with phone number instead');
+      console.log('4. Enter the code above');
       console.log('──────────────────────────────────────\n');
     } catch (err) {
       console.error('Failed to get pairing code:', err.message);
@@ -124,11 +118,6 @@ async function boot() {
   console.log(`📍 Group target: "${GROUP_NAME}"`);
   initWhatsApp();
   startScheduler();
-  if (process.env.RUN_NOW === 'true') {
-    console.log('⚡ RUN_NOW=true — waiting 30s then broadcasting...');
-    await new Promise((r) => setTimeout(r, 30000));
-    await runBroadcast();
-  }
 }
 
 boot();
