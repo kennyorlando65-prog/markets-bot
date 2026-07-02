@@ -18,11 +18,15 @@ function initWhatsApp() {
     authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
     puppeteer: {
       headless: true,
+      executablePath: process.env.CHROMIUM_PATH || '/run/current-system/sw/bin/chromium',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
       ],
     },
   });
