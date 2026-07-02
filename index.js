@@ -1,44 +1,13 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const cron = require('node-cron');
-const { execSync } = require('child_process');
 const { fetchAllData } = require('./fetchers');
 const { formatAllMessages } = require('./formatter');
 
 const GROUP_NAME = process.env.WHATSAPP_GROUP_NAME || '';
+const CHROMIUM_PATH = '/nix/var/nix/profiles/default/bin/chromium';
 
 let waClient = null;
 let isReady = false;
-
-function findChromium() {
-  const paths = [
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    '/run/current-system/sw/bin/chromium',
-    '/nix/var/nix/profiles/default/bin/chromium',
-  ];
-
-  for (const p of paths) {
-    try {
-      execSync(`test -f ${p}`);
-      console.log(`✅ Found Chromium at: ${p}`);
-      return p;
-    } catch {}
-  }
-
-  try {
-    const found = execSync('which chromium || which chromium-browser || which google-chrome')
-      .toString().trim().split('\n')[0];
-    if (found) {
-      console.log(`✅ Found Chromium via which: ${found}`);
-      return found;
-    }
-  } catch {}
-
-  console.warn('⚠️  Chromium not found — letting Puppeteer use default');
-  return undefined;
-}
 
 function initWhatsApp() {
   const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER;
@@ -46,28 +15,28 @@ function initWhatsApp() {
     throw new Error('WHATSAPP_PHONE_NUMBER is required. Format: 2348012345678');
   }
 
-  const chromiumPath = process.env.CHROMIUM_PATH || findChromium();
-
-  const puppeteerConfig = {
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-    ],
-  };
-
-  if (chromiumPath) {
-    puppeteerConfig.executablePath = chromiumPath;
-  }
-
   waClient = new Client({
     authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
-    puppeteer: puppeteerConfig,
+    puppeteer: {
+      headless: true,
+      executablePath: CHROMIUM_PATH,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-sync',
+        '--disable-translate',
+        '--hide-scrollbars',
+        '--metrics-recording-only',
+        '--mute-audio',
+        '--safebrowsing-disable-auto-update',
+      ],
+    },
   });
 
   waClient.on('qr', async () => {
@@ -156,8 +125,8 @@ async function boot() {
   initWhatsApp();
   startScheduler();
   if (process.env.RUN_NOW === 'true') {
-    console.log('⚡ RUN_NOW=true — waiting 20s then broadcasting...');
-    await new Promise((r) => setTimeout(r, 20000));
+    console.log('⚡ RUN_NOW=true — waiting 30s then broadcasting...');
+    await new Promise((r) => setTimeout(r, 30000));
     await runBroadcast();
   }
 }
