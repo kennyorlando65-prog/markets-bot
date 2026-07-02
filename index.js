@@ -1,5 +1,6 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const cron = require('node-cron');
+const { execSync } = require('child_process');
 const { fetchAllData } = require('./fetchers');
 const { formatAllMessages } = require('./formatter');
 
@@ -8,27 +9,65 @@ const GROUP_NAME = process.env.WHATSAPP_GROUP_NAME || '';
 let waClient = null;
 let isReady = false;
 
+function findChromium() {
+  const paths = [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/run/current-system/sw/bin/chromium',
+    '/nix/var/nix/profiles/default/bin/chromium',
+  ];
+
+  for (const p of paths) {
+    try {
+      execSync(`test -f ${p}`);
+      console.log(`✅ Found Chromium at: ${p}`);
+      return p;
+    } catch {}
+  }
+
+  try {
+    const found = execSync('which chromium || which chromium-browser || which google-chrome')
+      .toString().trim().split('\n')[0];
+    if (found) {
+      console.log(`✅ Found Chromium via which: ${found}`);
+      return found;
+    }
+  } catch {}
+
+  console.warn('⚠️  Chromium not found — letting Puppeteer use default');
+  return undefined;
+}
+
 function initWhatsApp() {
   const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER;
   if (!phoneNumber) {
     throw new Error('WHATSAPP_PHONE_NUMBER is required. Format: 2348012345678');
   }
 
+  const chromiumPath = process.env.CHROMIUM_PATH || findChromium();
+
+  const puppeteerConfig = {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+    ],
+  };
+
+  if (chromiumPath) {
+    puppeteerConfig.executablePath = chromiumPath;
+  }
+
   waClient = new Client({
     authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
-    puppeteer: {
-      headless: true,
-      executablePath: process.env.CHROMIUM_PATH || '/run/current-system/sw/bin/chromium',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-      ],
-    },
+    puppeteer: puppeteerConfig,
   });
 
   waClient.on('qr', async () => {
