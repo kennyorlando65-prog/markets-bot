@@ -1,94 +1,39 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const cron = require('node-cron');
+const pino = require('pino');
 const { fetchAllData } = require('./fetchers');
 const { formatAllMessages } = require('./formatter');
 
 const GROUP_NAME = process.env.WHATSAPP_GROUP_NAME || '';
-const CHROMIUM_PATH = '/nix/var/nix/profiles/default/bin/chromium';
+const PHONE_NUMBER = process.env.WHATSAPP_PHONE_NUMBER || '';
 
-let waClient = null;
+let sock = null;
 let isReady = false;
-let pairingRequested = false;
+let groupJid = null;
 
-function initWhatsApp() {
-  const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER;
-  if (!phoneNumber) {
-    throw new Error('WHATSAPP_PHONE_NUMBER is required.');
-  }
-
-  waClient = new Client({
-    authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
-    puppeteer: {
-      headless: true,
-      executablePath: CHROMIUM_PATH,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--disable-extensions',
-      ],
-    },
-  });
-
-  waClient.on('qr', async () => {
-    if (pairingRequested) return;
-    pairingRequested = true;
-    console.log('⏳ WhatsApp ready — requesting pairing code in 15s...');
-    await new Promise((r) => setTimeout(r, 15000));
-    try {
-      const code = await waClient.requestPairingCode(phoneNumber);
-      console.log('\n──────────────────────────────────────');
-      console.log('📲 WHATSAPP PAIRING CODE:');
-      console.log(`\n   👉  ${code}  👈\n`);
-      console.log('1. Open WhatsApp → 3-dot menu');
-      console.log('2. Linked Devices → Link a Device');
-      console.log('3. Link with phone number instead');
-      console.log('4. Enter the code above');
-      console.log('──────────────────────────────────────\n');
-    } catch (err) {
-      console.error('Failed to get pairing code:', err.message || JSON.stringify(err));
-      pairingRequested = false;
-    }
-  });
-
-  waClient.on('ready', () => {
-    console.log('✅ WhatsApp connected and ready!');
-    isReady = true;
-    pairingRequested = false;
-  });
-
-  waClient.on('auth_failure', (msg) => {
-    console.error('❌ WhatsApp auth failed:', msg);
-    isReady = false;
-  });
-
-  waClient.on('disconnected', (reason) => {
-    console.warn('⚠️  WhatsApp disconnected:', reason);
-    isReady = false;
-    pairingRequested = false;
-    setTimeout(() => waClient.initialize(), 5000);
-  });
-
-  waClient.initialize();
-}
-
-async function getGroupChatId() {
-  const chats = await waClient.getChats();
-  const group = chats.find(
-    (c) => c.isGroup && c.name.toLowerCase().includes(GROUP_NAME.toLowerCase())
+async function findGroup() {
+  if (!sock) return null;
+  const groups = await sock.groupFetchAllParticipating();
+  const found = Object.values(groups).find(
+    (g) => g.subject.toLowerCase().includes(GROUP_NAME.toLowerCase())
   );
-  if (!group) throw new Error(`Group "${GROUP_NAME}" not found.`);
-  return group.id._serialized;
+  if (found) {
+    console.log(`✅ Found group: ${found.subject} (${found.id})`);
+    groupJid = found.id;
+    return found.id;
+  }
+  console.error(`❌ Group "${GROUP_NAME}" not found`);
+  return null;
 }
 
 async function sendMessages(messages) {
-  if (!isReady) throw new Error('WhatsApp not ready yet.');
-  const chatId = await getGroupChatId();
+  if (!isReady || !sock) throw new Error('WhatsApp not ready yet.');
+  if (!groupJid) await findGroup();
+  if (!groupJid) throw new Error(`Group "${GROUP_NAME}" not found.`);
+
   for (let i = 0; i < messages.length; i++) {
     console.log(`📤 Sending message ${i + 1}/${messages.length}...`);
-    await waClient.sendMessage(chatId, messages[i]);
+    await sock.sendMessage(groupJid, { text: messages[i] });
     if (i < messages.length - 1) {
       await new Promise((r) => setTimeout(r, 3000));
     }
@@ -118,10 +63,56 @@ function startScheduler() {
   console.log('📅 Scheduler active — broadcasts daily at 8:00 AM WAT');
 }
 
+async function connectWhatsApp() {
+  const { state, saveCreds } = await useMultiFileAuthState('./auth_info');
+
+  sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    logger: pino({ level: 'silent' }),
+  });
+
+  // Request pairing code if not registered
+  if (!sock.authState.creds.registered) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const code = await sock.requestPairingCode(PHONE_NUMBER);
+    console.log('\n──────────────────────────────────────');
+    console.log('📲 WHATSAPP PAIRING CODE:');
+    console.log(`\n   👉  ${code}  👈\n`);
+    console.log('1. Open WhatsApp → 3-dot menu');
+    console.log('2. Linked Devices → Link a Device');
+    console.log('3. Link with phone number instead');
+    console.log('4. Enter the code above');
+    console.log('──────────────────────────────────────\n');
+  }
+
+  sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
+
+    if (connection === 'open') {
+      console.log('✅ WhatsApp connected and ready!');
+      isReady = true;
+      await findGroup();
+    }
+
+    if (connection === 'close') {
+      isReady = false;
+      const shouldReconnect =
+        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.warn('⚠️  WhatsApp disconnected. Reconnecting:', shouldReconnect);
+      if (shouldReconnect) {
+        setTimeout(connectWhatsApp, 5000);
+      }
+    }
+  });
+}
+
 async function boot() {
   console.log('🤖 Daily Markets WhatsApp Bot starting...');
   console.log(`📍 Group target: "${GROUP_NAME}"`);
-  initWhatsApp();
+  await connectWhatsApp();
   startScheduler();
 }
 

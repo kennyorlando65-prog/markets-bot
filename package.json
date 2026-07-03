@@ -1,17 +1,17 @@
 {
   "name": "daily-markets-whatsapp-bot",
   "version": "1.0.0",
-  "description": "Sends 5 daily market briefing messages to a WhatsApp group at 8AM WAT",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "test": "RUN_NOW=true node index.js"
+    "start": "node index.js"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
     "node-cron": "^3.0.3",
-    "whatsapp-web.js": "^1.26.0"
+    "pino": "^9.0.0",
+    "qrcode-terminal": "^0.12.0"
   }
 }
