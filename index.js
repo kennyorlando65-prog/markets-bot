@@ -10,6 +10,7 @@ const PHONE_NUMBER = process.env.WHATSAPP_PHONE_NUMBER || '';
 let sock = null;
 let isReady = false;
 let groupJid = null;
+let codeSent = false;
 
 async function findGroup() {
   if (!sock) return null;
@@ -18,7 +19,7 @@ async function findGroup() {
     (g) => g.subject.toLowerCase().includes(GROUP_NAME.toLowerCase())
   );
   if (found) {
-    console.log(`✅ Found group: ${found.subject} (${found.id})`);
+    console.log(`✅ Found group: ${found.subject}`);
     groupJid = found.id;
     return found.id;
   }
@@ -30,7 +31,6 @@ async function sendMessages(messages) {
   if (!isReady || !sock) throw new Error('WhatsApp not ready yet.');
   if (!groupJid) await findGroup();
   if (!groupJid) throw new Error(`Group "${GROUP_NAME}" not found.`);
-
   for (let i = 0; i < messages.length; i++) {
     console.log(`📤 Sending message ${i + 1}/${messages.length}...`);
     await sock.sendMessage(groupJid, { text: messages[i] });
@@ -44,11 +44,8 @@ async function sendMessages(messages) {
 async function runBroadcast() {
   console.log(`\n🚀 Broadcast started at ${new Date().toISOString()}`);
   try {
-    console.log('📡 Fetching market data...');
     const data = await fetchAllData();
-    console.log('🤖 Formatting messages with Groq...');
     const messages = await formatAllMessages(data);
-    console.log('📲 Sending to WhatsApp group...');
     await sendMessages(messages);
   } catch (err) {
     console.error('❌ Broadcast failed:', err.message);
@@ -57,10 +54,10 @@ async function runBroadcast() {
 
 function startScheduler() {
   cron.schedule('0 7 * * *', () => {
-    console.log('⏰ Cron triggered — running daily broadcast');
+    console.log('⏰ Cron triggered');
     runBroadcast();
   }, { timezone: 'UTC' });
-  console.log('📅 Scheduler active — broadcasts daily at 8:00 AM WAT');
+  console.log('📅 Scheduler active — 8:00 AM WAT daily');
 }
 
 async function connectWhatsApp() {
@@ -72,18 +69,26 @@ async function connectWhatsApp() {
     logger: pino({ level: 'silent' }),
   });
 
-  // Request pairing code if not registered
-  if (!sock.authState.creds.registered) {
+  // Only request pairing code ONCE
+  if (!sock.authState.creds.registered && !codeSent) {
+    codeSent = true;
     await new Promise((r) => setTimeout(r, 3000));
-    const code = await sock.requestPairingCode(PHONE_NUMBER);
-    console.log('\n──────────────────────────────────────');
-    console.log('📲 WHATSAPP PAIRING CODE:');
-    console.log(`\n   👉  ${code}  👈\n`);
-    console.log('1. Open WhatsApp → 3-dot menu');
-    console.log('2. Linked Devices → Link a Device');
-    console.log('3. Link with phone number instead');
-    console.log('4. Enter the code above');
-    console.log('──────────────────────────────────────\n');
+    try {
+      const code = await sock.requestPairingCode(PHONE_NUMBER);
+      console.log('\n──────────────────────────────────────');
+      console.log('📲 WHATSAPP PAIRING CODE:');
+      console.log(`\n   👉  ${code}  👈\n`);
+      console.log('Steps:');
+      console.log('1. Open WhatsApp → 3-dot menu');
+      console.log('2. Linked Devices → Link a Device');
+      console.log('3. "Link with phone number instead"');
+      console.log('4. Enter the code above');
+      console.log('\n⏳ Waiting for you to enter the code...');
+      console.log('──────────────────────────────────────\n');
+    } catch (err) {
+      console.error('❌ Pairing code error:', err.message);
+      codeSent = false;
+    }
   }
 
   sock.ev.on('creds.update', saveCreds);
@@ -92,17 +97,20 @@ async function connectWhatsApp() {
     const { connection, lastDisconnect } = update;
 
     if (connection === 'open') {
-      console.log('✅ WhatsApp connected and ready!');
+      console.log('✅ WhatsApp connected!');
       isReady = true;
+      codeSent = false;
       await findGroup();
     }
 
     if (connection === 'close') {
       isReady = false;
-      const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.warn('⚠️  WhatsApp disconnected. Reconnecting:', shouldReconnect);
-      if (shouldReconnect) {
+      const code = lastDisconnect?.error?.output?.statusCode;
+      const loggedOut = code === DisconnectReason.loggedOut;
+      console.warn('⚠️  Disconnected. Code:', code);
+      // Only reconnect if not logged out — don't reconnect during pairing
+      if (!loggedOut && isReady) {
+        console.log('🔄 Reconnecting in 5s...');
         setTimeout(connectWhatsApp, 5000);
       }
     }
@@ -111,7 +119,7 @@ async function connectWhatsApp() {
 
 async function boot() {
   console.log('🤖 Daily Markets WhatsApp Bot starting...');
-  console.log(`📍 Group target: "${GROUP_NAME}"`);
+  console.log(`📍 Group: "${GROUP_NAME}"`);
   await connectWhatsApp();
   startScheduler();
 }
