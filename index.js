@@ -8,6 +8,7 @@ const CHROMIUM_PATH = '/nix/var/nix/profiles/default/bin/chromium';
 
 let waClient = null;
 let isReady = false;
+let pairingRequested = false;
 
 function initWhatsApp() {
   const phoneNumber = process.env.WHATSAPP_PHONE_NUMBER;
@@ -32,9 +33,10 @@ function initWhatsApp() {
   });
 
   waClient.on('qr', async () => {
-    // Wait 5 seconds for WhatsApp Web to fully load before requesting code
-    console.log('⏳ QR triggered — waiting 5s before requesting pairing code...');
-    await new Promise((r) => setTimeout(r, 5000));
+    if (pairingRequested) return;
+    pairingRequested = true;
+    console.log('⏳ WhatsApp ready — requesting pairing code in 15s...');
+    await new Promise((r) => setTimeout(r, 15000));
     try {
       const code = await waClient.requestPairingCode(phoneNumber);
       console.log('\n──────────────────────────────────────');
@@ -46,13 +48,15 @@ function initWhatsApp() {
       console.log('4. Enter the code above');
       console.log('──────────────────────────────────────\n');
     } catch (err) {
-      console.error('Failed to get pairing code:', err.message);
+      console.error('Failed to get pairing code:', err.message || JSON.stringify(err));
+      pairingRequested = false;
     }
   });
 
   waClient.on('ready', () => {
     console.log('✅ WhatsApp connected and ready!');
     isReady = true;
+    pairingRequested = false;
   });
 
   waClient.on('auth_failure', (msg) => {
@@ -63,6 +67,7 @@ function initWhatsApp() {
   waClient.on('disconnected', (reason) => {
     console.warn('⚠️  WhatsApp disconnected:', reason);
     isReady = false;
+    pairingRequested = false;
     setTimeout(() => waClient.initialize(), 5000);
   });
 
